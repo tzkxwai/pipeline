@@ -5,7 +5,7 @@ on:
     types: [closed]
 
 permissions:
-  contents: write  # Разрешаем пуш и создание тегов
+  contents: write
 
 jobs:
   version_and_changelog:
@@ -21,10 +21,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Get base branch name
-        id: vars
+      - name: Collect project metadata
+        id: meta
         run: |
-          echo "base_branch=${{ github.event.pull_request.base.ref }}" >> $GITHUB_OUTPUT
+          echo "datetime=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+          echo "project_name=${GITHUB_REPOSITORY##*/}" >> $GITHUB_OUTPUT
+          echo "repo_full=${GITHUB_REPOSITORY}" >> $GITHUB_OUTPUT
+          echo "repo_owner=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_OUTPUT
 
       - name: Read current version
         id: get_version
@@ -56,12 +59,15 @@ jobs:
           NEW_VERSION="$MAJOR.$MINOR.$PATCH"
           echo "$NEW_VERSION" > VERSION
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "git_tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
 
       - name: Update CHANGELOG
         run: |
-          echo "## Version ${{ steps.bump.outputs.new_version }} - $(date +'%Y-%m-%d')" >> CHANGELOG.md
+          echo "## Version ${{ steps.bump.outputs.new_version }} - $(date +'%Y-%m-%d %H:%M:%S UTC')" >> CHANGELOG.md
+          echo "- Project: ${{ steps.meta.outputs.repo_full }}" >> CHANGELOG.md
           echo "- Merged branch: ${{ github.event.pull_request.head.ref }}" >> CHANGELOG.md
           echo "- Pull request: #${{ github.event.pull_request.number }}" >> CHANGELOG.md
+          echo "- Author: ${{ github.event.pull_request.user.login }}" >> CHANGELOG.md
           echo "" >> CHANGELOG.md
 
       - name: Commit & Push version bump
@@ -72,19 +78,24 @@ jobs:
 
       - name: Create Tag
         run: |
-          git tag v${{ steps.bump.outputs.new_version }}
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} v${{ steps.bump.outputs.new_version }}
+          git tag ${{ steps.bump.outputs.git_tag }}
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} ${{ steps.bump.outputs.git_tag }}
 
       - name: Send Telegram Notification
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          MESSAGE="✅ *Новая версия проекта!*%0A\
-          📦 Версия: v${{ steps.bump.outputs.new_version }}%0A\
-          🔀 Ветка: ${{ github.event.pull_request.base.ref }}%0A\
-          🧩 PR: #${{ github.event.pull_request.number }}%0A\
-          💬 Автор: ${{ github.event.pull_request.user.login }}"
+          MESSAGE="🚀 *Новый релиз проекта!*%0A%0A\
+          🏷 *Проект:* ${{ steps.meta.outputs.project_name }}%0A\
+          📂 *Репозиторий:* ${{ steps.meta.outputs.repo_full }}%0A\
+          👤 *Владелец:* ${{ steps.meta.outputs.repo_owner }}%0A\
+          📦 *Версия:* v${{ steps.bump.outputs.new_version }}%0A\
+          🔖 *Git tag:* ${{ steps.bump.outputs.git_tag }}%0A\
+          🔀 *Ветка:* ${{ github.event.pull_request.base.ref }}%0A\
+          🧩 *PR:* #${{ github.event.pull_request.number }}%0A\
+          💬 *Автор:* ${{ github.event.pull_request.user.login }}%0A\
+          🕒 *Дата:* ${{ steps.meta.outputs.datetime }}"
           
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
           -d chat_id="${TELEGRAM_CHAT_ID}" \
